@@ -1,0 +1,200 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Application Stack ",
+	"Parameters": {
+		"KeyName": {
+			"Description": "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+			"Type": "AWS::EC2::KeyPair::KeyName",
+			"ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+		},
+		"PROJECTDesktopImageId": {
+			"Type": "String",
+			"Default": "ami-6e413401",
+			"Description": "The AMIID of PROJECT Mobile instance Instance"
+		},
+		"OperatorEMail": {
+			"Description": "EMail address to notify if there are any scaling operations",
+			"Type": "String",
+			"AllowedPattern": "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)",
+			"ConstraintDescription": "must be a valid email address."
+		},
+		"PROJECTDesktopInstanceType": {
+			"Type": "String",
+			"Default": "m4.xlarge",
+			"Description": "The instance id  of PROJECT Mobile instance Instance"
+		}
+	},
+	"Resources": {
+		"NotificationTopic": {
+			"Type": "AWS::SNS::Topic",
+			"Properties": {
+				"Subscription": [{
+					"Endpoint": {
+						"Ref": "OperatorEMail"
+					},
+					"Protocol": "email"
+				}]
+			}
+		},
+		"PROJECTDesktopLoadBalancer": {
+			"Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+			"Properties": {
+				"LoadBalancerName": "PROJECTDesktopLoadBalancer",
+				"Listeners": [{
+					"InstancePort": 80,
+					"InstanceProtocol": "HTTP",
+					"LoadBalancerPort": 80,
+					"Protocol": "HTTP"
+				}],
+				"Scheme": "internet-facing",
+				"SecurityGroups": [
+					"sg-1ab96473"
+				],
+				"Subnets": [
+					"subnet-59fcff13",
+					"subnet-db30f3b2"
+				],
+				"HealthCheck": {
+					"Target": "HTTP:80/",
+					"HealthyThreshold": "5",
+					"UnhealthyThreshold": "3",
+					"Interval": "30",
+					"Timeout": "5"
+				}
+			}
+		},
+
+		"PROJECTDesktopASG": {
+			"Type": "AWS::AutoScaling::AutoScalingGroup",
+			"Properties": {
+				"AvailabilityZones": [
+					"ap-south-1a",
+					"ap-south-1b"
+				],
+				"VPCZoneIdentifier": [
+					"subnet-dd30f3b4",
+					"subnet-5cfcff16"
+				],
+				"LaunchConfigurationName": {
+					"Ref": "PROJECTDesktopLaunchConfig"
+				},
+				"MinSize": "1",
+				"MaxSize": "2",
+				"DesiredCapacity": "1",
+				"LoadBalancerNames": [{
+					"Ref": "PROJECTDesktopLoadBalancer"
+				}],
+				"NotificationConfigurations": [{
+					"TopicARN": {
+						"Ref": "NotificationTopic"
+					},
+					"NotificationTypes": [
+						"autoscaling:EC2_INSTANCE_LAUNCH",
+						"autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+						"autoscaling:EC2_INSTANCE_TERMINATE",
+						"autoscaling:EC2_INSTANCE_TERMINATE_ERROR"
+					]
+				}],
+				"Tags": [{
+					"Key": "Name",
+					"Value": "PROD-PROJECTDesktop",
+					"PropagateAtLaunch": true
+				}, {
+					"Key": "Environment",
+					"Value": "Production",
+					"PropagateAtLaunch": true
+				}]
+			}
+		},
+		"PROJECTDesktopLaunchConfig": {
+			"Type": "AWS::AutoScaling::LaunchConfiguration",
+			"Properties": {
+				"ImageId": {
+					"Ref": "PROJECTDesktopImageId"
+				},
+				"KeyName": {
+					"Ref": "KeyName"
+				},
+				"IamInstanceProfile": "arn:aws:iam::705339930841:instance-profile/IndiaTV-Mobile-APP-Stack-ApproleInstanceProfile-IHTXQS8EK7IQ",
+				"SecurityGroups": [
+					"sg-0b6ab962"
+				],
+				"InstanceType": {
+					"Ref": "PROJECTDesktopInstanceType"
+				}
+			}
+		},
+		"PROJECTDesktopASGScaleUpPolicy": {
+			"Type": "AWS::AutoScaling::ScalingPolicy",
+			"DependsOn": "PROJECTDesktopASG",
+			"Properties": {
+				"AdjustmentType": "ChangeInCapacity",
+				"AutoScalingGroupName": {
+					"Ref": "PROJECTDesktopASG"
+				},
+				"Cooldown": "300",
+				"ScalingAdjustment": "1"
+			}
+		},
+		"PROJECTDesktopASGDownPolicy": {
+			"Type": "AWS::AutoScaling::ScalingPolicy",
+			"DependsOn": "PROJECTDesktopASG",
+			"Properties": {
+				"AdjustmentType": "ChangeInCapacity",
+				"AutoScalingGroupName": {
+					"Ref": "PROJECTDesktopASG"
+				},
+				"Cooldown": "300",
+				"ScalingAdjustment": "-1"
+			}
+		},
+
+		"PROJECTDesktopCPUAlarmHigh": {
+			"Type": "AWS::CloudWatch::Alarm",
+			"DependsOn": "PROJECTDesktopASGScaleUpPolicy",
+			"Properties": {
+				"AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+
+				"AlarmActions": [{
+					"Ref": "PROJECTDesktopASGScaleUpPolicy"
+				}],
+				"Dimensions": [{
+					"Name": "AutoScalingGroupName",
+					"Value": {
+						"Ref": "PROJECTDesktopASG"
+					}
+				}],
+				"ComparisonOperator": "GreaterThanThreshold"
+			}
+		},
+		"PROJECTDesktopCPUAlarmLow": {
+			"Type": "AWS::CloudWatch::Alarm",
+			"DependsOn": "PROJECTDesktopASGDownPolicy",
+			"Properties": {
+				"AlarmDescription": "Scale-down if CPU < 70% for 10 minutes",
+				"MetricName": "CPUUtilization",
+				"Namespace": "AWS/EC2",
+				"Statistic": "Average",
+				"Period": "300",
+				"EvaluationPeriods": "2",
+				"Threshold": "70",
+				"AlarmActions": [{
+					"Ref": "PROJECTDesktopASGDownPolicy"
+				}],
+				"Dimensions": [{
+					"Name": "AutoScalingGroupName",
+					"Value": {
+						"Ref": "PROJECTDesktopASG"
+					}
+				}],
+				"ComparisonOperator": "LessThanThreshold"
+			}
+		}
+	}
+}
